@@ -1,0 +1,60 @@
+#!/bin/bash
+
+# Verify the correct number of arguments were passed
+if [ $# -ne 2 ]; then
+    echo "Usage: $0 <path to manuals.json> <path to versions.json>"
+    exit 1
+fi
+
+MANUALS_JSON=$1
+VERSIONS_JSON=$2
+echo "Updating manuals using manuals: $MANUALS_JSON with versions: $VERSIONS_JSON"
+echo
+
+# Creates the pubs directory
+PUBS_DIR="pubs"
+if [ ! -d $PUBS_DIR ]; then
+    mkdir $PUBS_DIR
+fi
+
+# List out all of the manuals to download
+PUBS=$(jq '. | keys | .[]' $VERSIONS_JSON)
+
+# Update each manual
+for PUB in $PUBS; do
+    # Remove quotes from the manual name
+    PUB=$(echo $PUB | tr -d '"')
+
+    # Get the desired version and URL for the manual
+    VERSION=$(jq ".[\"$PUB\"]" $VERSIONS_JSON | tr -d '"')
+    REPO_URL=$(jq ".[\"$PUB\"]" $MANUALS_JSON | tr -d '"')
+    if [ -z "$REPO_URL" ]; then
+        echo "No URL found for $PUB"
+        continue
+    fi
+
+    if [ -d "$PUBS_DIR/$PUB" ]; then
+        # Directory exists, fetch changes and checkout the desired version
+        echo "Updating $PUBS_DIR/$PUB"
+        cd $PUBS_DIR/$PUB
+        git pull origin main
+        cd ../..
+    else
+        # Directory does not exist, clone the repo
+        echo "Cloning $PUB"
+        git clone $REPO_URL $PUBS_DIR/$PUB
+    fi
+
+    cd $PUBS_DIR/$PUB
+    if [ -z $(git tag --list $VERSION) ]; then
+        # No version specified, use the latest
+        echo "No version $VERSION found for $PUB"
+    else
+        # Checkout the desired version
+        echo "Using version $VERSION for $PUB"
+        git config advice.detachedHead false
+        git checkout $VERSION
+    fi
+    cd ../..
+    echo
+done
