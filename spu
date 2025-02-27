@@ -1,13 +1,96 @@
 #!/bin/bash
 
-# Verify the correct number of arguments were passed
-if [ $# -ne 2 ]; then
-    echo "Usage: $0 <path to manuals.json> <path to versions.json>"
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+# Function to display usage
+usage() {
+    echo "Usage: $0 [-s|--update-spu] [-b|--update-baseline] [-o|--offline] [-v|--verify] [(<path to manuals.json> <path to versions.json>)]"
+    exit 1
+}
+
+update_spu() {
+    echo "Pulling SPU from remote repository..."
+    git pull origin main
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Failed to update SPU. Please check your network connection and try again.${NC}"
+        exit 1
+    fi
+    echo "SPU updated successfully."
+    exit 0
+}
+
+# Check to make sure spu is run from the root of the SPU repository
+if [ "$0" != "./spu" ]; then
+    echo -e "${RED}Please run SPU from the root of the SPU repository (./spu)${NC}"
     exit 1
 fi
 
-MANUALS_JSON=$1
-VERSIONS_JSON=$2
+# Initialize variables
+UPDATE_SPU=false
+UPDATE_BASELINE=false
+OFFLINE=false
+VERIFY=false
+MANUALS_JSON="baseline/manuals.json"
+VERSIONS_JSON="state/versions.json"
+
+# Parse options
+while [[ "$1" =~ ^- && ! "$1" == "--" ]]; do case $1 in
+  -u | --update-spu )
+    UPDATE_SPU=true
+    ;;
+  -b | --update-baseline )
+    UPDATE_BASELINE=true
+    ;;
+  -o | --offline )
+    OFFLINE=true
+    ;;
+  -v | --verify )
+    VERIFY=true
+    ;;
+  * )
+    usage
+    ;;
+esac; shift; done
+if [[ "$1" == '--' ]]; then shift; fi
+
+# Parse manuals and versions arguments
+if [ $# -eq 2 ]; then
+    MANUALS_JSON=$1
+    VERSIONS_JSON=$2
+elif [ $# -ne 0 ]; then
+    usage
+fi
+
+# Check for self-update option
+if [ "$UPDATE_SPU" == true ]; then
+    update_spu
+fi
+
+# Check for baseline update option
+if [ "$UPDATE_BASELINE" == true ]; then
+    echo "Updating baseline..."
+    cd baseline
+    git checkout -f main
+    git pull origin main
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Failed to update baseline. Please check your network connection and try again.${NC}"
+        cd ..
+        exit 1
+    fi
+    cd ..
+fi
+
+# Verify that both manuals.json and versions.json exist
+if [ ! -f $MANUALS_JSON ]; then
+    echo -e "${RED}Manuals file not found: ${MANUALS_JSON}${NC}"
+    exit 1
+fi
+if [ ! -f $VERSIONS_JSON ]; then
+    echo -e "${RED}Versions file not found: ${VERSIONS_JSON}${NC}"
+    exit 1
+fi
+
 echo "Updating manuals using manuals: $MANUALS_JSON with versions: $VERSIONS_JSON"
 echo
 
@@ -28,8 +111,9 @@ for PUB in $PUBS; do
     # Get the desired version and URL for the manual
     VERSION=$(jq ".[\"$PUB\"]" $VERSIONS_JSON | tr -d '"')
     REPO_URL=$(jq ".[\"$PUB\"]" $MANUALS_JSON | tr -d '"')
-    if [ -z "$REPO_URL" ]; then
-        echo "No URL found for $PUB"
+    if [ "$REPO_URL" == "null" ]; then
+        echo -e "${RED}No URL found for ${PUB}${NC}"
+        echo
         continue
     fi
 
@@ -37,6 +121,7 @@ for PUB in $PUBS; do
         # Directory exists, fetch changes and checkout the desired version
         echo "Updating $PUBS_DIR/$PUB"
         cd $PUBS_DIR/$PUB
+        git checkout -f main
         git pull origin main
         cd ../..
     else
@@ -48,7 +133,7 @@ for PUB in $PUBS; do
     cd $PUBS_DIR/$PUB
     if [ -z $(git tag --list $VERSION) ]; then
         # No version specified, use the latest
-        echo "No version $VERSION found for $PUB"
+        echo -e "${RED}No version $VERSION found for ${PUB}${NC}"
     else
         # Checkout the desired version
         echo "Using version $VERSION for $PUB"
