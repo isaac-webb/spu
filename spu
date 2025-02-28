@@ -1,11 +1,15 @@
 #!/bin/bash
 
 RED='\033[0;31m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 # Function to display usage
 usage() {
-    echo "Usage: $0 [-s|--update-spu] [-b|--update-baseline] [-o|--offline] [-v|--verify] [(<path to manuals.json> <path to versions.json>)]"
+    cat << EOF
+Usage: ./spu [-s|--update-spu] 
+       ./spu [-b|--update-baseline] [-o|--offline] [-v|--verify] [(<path to manuals.json> <path to versions.json>)]
+       ./spu [-i|--init] <path to manuals.json>
+EOF
     exit 1
 }
 
@@ -20,6 +24,24 @@ update_spu() {
     exit 0
 }
 
+init_baseline() {
+    if [ -d "baseline" ]; then
+        echo -e "${RED}baseline directory already exists.${NC}"
+        exit 1
+    fi
+    if [ ! -f "$1" ]; then
+        echo -e "${RED}Init file ${1} does not exist.${NC}"
+        exit 1
+    fi
+    echo "Cloning baseline..."
+    git clone $(head -n 1 "$1") baseline
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Failed to clone baseline. Check your internet connection.${NC}"
+        exit 1
+    fi
+    exit 0
+}
+
 # Check to make sure spu is run from the root of the SPU repository
 if [ "$0" != "./spu" ]; then
     echo -e "${RED}Please run SPU from the root of the SPU repository (./spu)${NC}"
@@ -27,7 +49,6 @@ if [ "$0" != "./spu" ]; then
 fi
 
 # Initialize variables
-UPDATE_SPU=false
 UPDATE_BASELINE=false
 OFFLINE=false
 VERIFY=false
@@ -37,7 +58,10 @@ VERSIONS_JSON="state/versions.json"
 # Parse options
 while [[ "$1" =~ ^- && ! "$1" == "--" ]]; do case $1 in
   -u | --update-spu )
-    UPDATE_SPU=true
+    update_spu
+    ;;
+  -i | --init )
+    init_baseline $2
     ;;
   -b | --update-baseline )
     UPDATE_BASELINE=true
