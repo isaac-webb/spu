@@ -1,14 +1,16 @@
 #!/bin/bash
 
+# TODO: Make sure clone and pull operations minimize the history downloaded
+
 RED='\033[0;31m'
 NC='\033[0m'
 
 # Function to display usage
 usage() {
     cat << EOF
-Usage: ./spu [-s|--update-spu] 
+Usage: ./spu [-s|--update-spu]
        ./spu [-b|--update-baseline] [-o|--offline] [-v|--verify] [(<path to manuals.json> <path to versions.json>)]
-       ./spu [-i|--init] <path to manuals.json>
+       ./spu [-i|--init]
 EOF
     exit 1
 }
@@ -29,12 +31,12 @@ init_baseline() {
         echo -e "${RED}baseline directory already exists.${NC}"
         exit 1
     fi
-    if [ ! -f "$1" ]; then
-        echo -e "${RED}Init file ${1} does not exist.${NC}"
+    if [ ! -f "init_url.txt" ]; then
+        echo -e "${RED}Init file init_url.txt does not exist.${NC}"
         exit 1
     fi
     echo "Cloning baseline..."
-    git clone $(head -n 1 "$1") baseline
+    git clone $(head -n 1 "init_url.txt") baseline
     if [ $? -ne 0 ]; then
         echo -e "${RED}Failed to clone baseline. Check your internet connection.${NC}"
         exit 1
@@ -53,15 +55,15 @@ UPDATE_BASELINE=false
 OFFLINE=false
 VERIFY=false
 MANUALS_JSON="baseline/manuals.json"
-VERSIONS_JSON="state/versions.json"
+VERSIONS_JSON="baseline/versions.json"
 
 # Parse options
 while [[ "$1" =~ ^- && ! "$1" == "--" ]]; do case $1 in
-  -u | --update-spu )
+  -s | --update-spu )
     update_spu
     ;;
   -i | --init )
-    init_baseline $2
+    init_baseline
     ;;
   -b | --update-baseline )
     UPDATE_BASELINE=true
@@ -86,16 +88,13 @@ elif [ $# -ne 0 ]; then
     usage
 fi
 
-# Check for self-update option
-if [ "$UPDATE_SPU" == true ]; then
-    update_spu
-fi
-
 # Check for baseline update option
-if [ "$UPDATE_BASELINE" == true ]; then
+if [[ "$UPDATE_BASELINE" == true && "$OFFLINE" == false ]]; then
     echo "Updating baseline..."
     cd baseline
+    BASELINE_URL=$(jq ".baseline" $MANUALS_JSON | tr -d '"')
     git checkout -f main
+    git remote set-url origin $BASELINE_URL
     git pull origin main
     if [ $? -ne 0 ]; then
         echo -e "${RED}Failed to update baseline. Please check your network connection and try again.${NC}"
@@ -141,29 +140,55 @@ for PUB in $PUBS; do
         continue
     fi
 
-    if [ -d "$PUBS_DIR/$PUB" ]; then
-        # Directory exists, fetch changes and checkout the desired version
-        echo "Updating $PUBS_DIR/$PUB"
-        cd $PUBS_DIR/$PUB
-        git checkout -f main
-        git pull origin main
-        cd ../..
+    if [ "$OFFLINE" == false ]; then
+        if [ -d "$PUBS_DIR/$PUB" ]; then
+            # Directory exists, fetch changes and checkout the desired version
+            echo "Updating $PUBS_DIR/$PUB"
+            cd $PUBS_DIR/$PUB
+            git checkout -f main
+            git pull origin main
+            cd ../..
+        else
+            # Directory does not exist, clone the repo
+            echo "Cloning $PUB"
+            git clone $REPO_URL $PUBS_DIR/$PUB
+        fi
     else
-        # Directory does not exist, clone the repo
-        echo "Cloning $PUB"
-        git clone $REPO_URL $PUBS_DIR/$PUB
+        echo "Skipping online update for $PUB"
+    fi
+
+    # Verify the directory exists
+    if [ ! -d "$PUBS_DIR/$PUB" ]; then
+        echo -e "${RED}Directory for $PUB does not exist${NC}"
+        echo
+        continue
     fi
 
     cd $PUBS_DIR/$PUB
     if [ -z $(git tag --list $VERSION) ]; then
         # No version specified, use the latest
         echo -e "${RED}No version $VERSION found for ${PUB}${NC}"
+        git checkout -f $VERSION
     else
         # Checkout the desired version
         echo "Using version $VERSION for $PUB"
         git config advice.detachedHead false
-        git checkout $VERSION
+        git checkout -f $VERSION
     fi
     cd ../..
     echo
 done
+
+# Verify the versions of all downloaded manuals
+if [ "$VERIFY" == true ]; then
+    echo "Verifying versions..."
+    cd $PUBS_DIR
+    for PUB in $PUBS; do
+        cd $(echo "$PUB" | tr -d '"')
+        echo ""
+        echo "$PUB"
+        git log --oneline --decorate HEAD
+        cd ..
+    done
+    cd ..
+fi
