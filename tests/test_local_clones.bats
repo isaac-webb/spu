@@ -12,6 +12,8 @@ setup_file() {
     cd "$TMPDIR/remote_working"
     echo "hello" > README.md
     git add README.md
+    git config user.name "testing"
+    git config user.email "testing@test.com"
     git commit -m "init"
     git tag v1
     git push origin main
@@ -25,6 +27,8 @@ setup_file() {
     echo "testpub $TMPDIR/remote.git" >> manuals.txt
     echo "testpub v1" > versions.txt
     git add manuals.txt versions.txt
+    git config user.name "testing"
+    git config user.email "testing@test.com"
     git commit -m "init baseline"
     git push origin main
     echo "$TMPDIR/baseline.git" > "$TMPDIR/init_url.txt"
