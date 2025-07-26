@@ -1,4 +1,4 @@
 pubs/*
 baseline/*
 state/*
-*.yml
+docker-compose.yml

@@ -1,6 +1,9 @@
 #!/bin/bash
 
-# TODO: Make sure clone and pull operations minimize the history downloaded
+# TODO: Reduce git fetch depth
+# TODO: Does baseline updating work as intended?
+
+set -euo pipefail
 
 RED='\033[0;31m'
 NC='\033[0m'
@@ -20,12 +23,15 @@ error_exit() {
     exit 1
 }
 
+# Check for required commands
+for cmd in git grep cut; do
+    command -v "$cmd" >/dev/null 2>&1 || error_exit "$cmd is required but not installed."
+done
+
 update_spu() {
     echo "Pulling SPU from remote repository..."
-    git pull origin main
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}Failed to update SPU. Please check your network connection and try again.${NC}"
-        exit 1
+    if ! git pull origin main; then
+        error_exit "Failed to update SPU. Please check your network connection and try again."
     fi
     echo "SPU updated successfully."
     exit 0
@@ -33,32 +39,21 @@ update_spu() {
 
 init_baseline() {
     if [ -d "baseline" ]; then
-        echo -e "${RED}baseline directory already exists.${NC}"
-        exit 1
+        error_exit "baseline directory already exists."
     fi
     if [ ! -f "init_url.txt" ]; then
-        echo -e "${RED}Init file init_url.txt does not exist.${NC}"
-        exit 1
+        error_exit "Init file init_url.txt does not exist."
     fi
     echo "Cloning baseline..."
-    git clone $(head -n 1 "init_url.txt") baseline
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}Failed to clone baseline. Check your internet connection.${NC}"
-        exit 1
+    if ! git clone "$(head -n 1 "init_url.txt")" baseline; then
+        error_exit "Failed to clone baseline. Check your internet connection."
     fi
     exit 0
 }
 
 # Check to make sure spu is run from the root of the SPU repository
 if [ "$0" != "./spu" ]; then
-    echo -e "${RED}Please run SPU from the root of the SPU repository (./spu)${NC}"
-    exit 1
-fi
-
-# Check for git
-if ! command -v git &> /dev/null; then
-    echo -e "${RED}git is not installed.${NC}"
-    exit 1
+    error_exit "Please run SPU from the root of the SPU repository (./spu)"
 fi
 
 # Initialize variables
@@ -69,7 +64,7 @@ MANUALS_FILE="baseline/manuals.txt"
 VERSIONS_FILE="baseline/versions.txt"
 
 # Parse options
-while [[ "$1" =~ ^- && ! "$1" == "--" ]]; do case $1 in
+while [[ "${1:-}" =~ ^- && ! "${1:-}" == "--" ]]; do case $1 in
   -s | --update-spu )
     update_spu
     ;;
@@ -89,12 +84,12 @@ while [[ "$1" =~ ^- && ! "$1" == "--" ]]; do case $1 in
     usage
     ;;
 esac; shift; done
-if [[ "$1" == '--' ]]; then shift; fi
+if [[ "${1:-}" == '--' ]]; then shift; fi
 
 # Parse manuals and versions arguments
 if [ $# -eq 2 ]; then
-    MANUALS_FILE=$1
-    VERSIONS_FILE=$2
+    MANUALS_FILE="$1"
+    VERSIONS_FILE="$2"
 elif [ $# -ne 0 ]; then
     usage
 fi
@@ -102,29 +97,21 @@ fi
 # Check for baseline update option
 if [[ "$UPDATE_BASELINE" == true && "$OFFLINE" == false ]]; then
     echo "Updating baseline..."
-    cd baseline
+    cd baseline || error_exit "Failed to enter baseline directory."
     BASELINE_URL=$(grep "^baseline .*$" "$MANUALS_FILE" | cut -d' ' -f2)
-    git checkout -f main
+    git checkout -f main || error_exit "Failed to checkout main in baseline."
     # TODO: Check to see if the URL has changed. Likely need to clone if so, or limit migration.
-    git remote set-url origin "$BASELINE_URL"
-    git pull origin main
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}Failed to update baseline. Please check your network connection and try again.${NC}"
+    git remote set-url origin "$BASELINE_URL" || error_exit "Failed to set baseline remote URL."
+    if ! git pull origin main; then
         cd ..
-        exit 1
+        error_exit "Failed to update baseline. Please check your network connection and try again."
     fi
     cd ..
 fi
 
 # Verify that both manuals and versions exist
-if [ ! -f "$MANUALS_FILE" ]; then
-    echo -e "${RED}Manuals file not found: ${MANUALS_FILE}${NC}"
-    exit 1
-fi
-if [ ! -f "$VERSIONS_FILE" ]; then
-    echo -e "${RED}Versions file not found: ${VERSIONS_FILE}${NC}"
-    exit 1
-fi
+[ -f "$MANUALS_FILE" ] || error_exit "Manuals file not found: $MANUALS_FILE"
+[ -f "$VERSIONS_FILE" ] || error_exit "Versions file not found: $VERSIONS_FILE"
 
 echo "Updating manuals using manuals: $MANUALS_FILE with versions: $VERSIONS_FILE"
 echo
@@ -141,7 +128,7 @@ for PUB in $PUBS; do
     # Get the desired version and URL for the manual
     VERSION=$(grep "^$PUB .*$" "$VERSIONS_FILE" | cut -d' ' -f2)
     REPO_URL=$(grep "^$PUB .*$" "$MANUALS_FILE" | cut -d' ' -f2)
-    if [ "$REPO_URL" == "" ]; then
+    if [ -z "$REPO_URL" ]; then
         echo -e "${RED}No URL found for ${PUB}${NC}"
         echo
         continue
@@ -152,15 +139,19 @@ for PUB in $PUBS; do
             # Directory exists, fetch changes and checkout the desired version
             # TODO: Perform similar URL change/check that baseline performs?
             echo "Updating $PUBS_DIR/$PUB"
-            cd "$PUBS_DIR/$PUB"
-            git checkout -f main
-            git fetch -f --tags
-            git pull origin main
+            cd "$PUBS_DIR/$PUB" || { echo -e "${RED}Failed to enter $PUBS_DIR/$PUB${NC}"; continue; }
+            git checkout -f main || { echo -e "${RED}Failed to checkout main for $PUB${NC}"; cd ../..; continue; }
+            git fetch -f --tags || { echo -e "${RED}Failed to fetch tags for $PUB${NC}"; cd ../..; continue; }
+            git pull origin main || { echo -e "${RED}Failed to pull for $PUB${NC}"; cd ../..; continue; }
             cd ../..
         else
             # Directory does not exist, clone the repo
             echo "Cloning $PUB"
-            git clone "$REPO_URL" "$PUBS_DIR/$PUB"
+            if ! git clone "$REPO_URL" "$PUBS_DIR/$PUB"; then
+                echo -e "${RED}Failed to clone $PUB${NC}"
+                echo
+                continue
+            fi
         fi
     else
         echo "Skipping online update for $PUB"
@@ -173,7 +164,7 @@ for PUB in $PUBS; do
         continue
     fi
 
-    cd "$PUBS_DIR/$PUB"
+    cd "$PUBS_DIR/$PUB" || { echo -e "${RED}Failed to enter $PUBS_DIR/$PUB${NC}"; continue; }
     if [ -z "$(git tag --list "$VERSION")" ]; then
         # No version specified, use the latest
         echo -e "${RED}No version $VERSION found for ${PUB}, using most recent commit${NC}"
@@ -181,7 +172,7 @@ for PUB in $PUBS; do
         # Checkout the desired version
         echo "Using version $VERSION for $PUB"
         git config advice.detachedHead false
-        git checkout -f "$VERSION"
+        git checkout -f "$VERSION" || echo -e "${RED}Failed to checkout $VERSION for $PUB${NC}"
     fi
     cd ../..
     echo
@@ -191,11 +182,11 @@ done
 if [ "$VERIFY" == true ]; then
     echo "Verifying versions..."
     echo ""
-    cd "$PUBS_DIR"
-    for PUB in "$PUBS"; do
-        cd "$PUB"
+    cd "$PUBS_DIR" || error_exit "Failed to enter $PUBS_DIR"
+    for PUB in $PUBS; do
+        cd "$PUB" || { echo -e "${RED}Failed to enter $PUB${NC}"; cd ..; continue; }
         echo "$PUB"
-        git log --oneline --decorate -n 1 HEAD
+        git log --oneline --decorate -n 1 HEAD || echo -e "${RED}Failed to get log for $PUB${NC}"
         cd ..
     done
     cd ..
