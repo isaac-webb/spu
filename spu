@@ -9,9 +9,14 @@ NC='\033[0m'
 usage() {
     cat << EOF
 Usage: ./spu [-s|--update-spu]
-       ./spu [-b|--update-baseline] [-o|--offline] [-v|--verify] [(<path to manuals.json> <path to versions.json>)]
+       ./spu [-b|--update-baseline] [-o|--offline] [-v|--verify] [(<path to manuals.txt> <path to versions.txt>)]
        ./spu [-i|--init]
 EOF
+    exit 1
+}
+
+error_exit() {
+    echo -e "${RED}$1${NC}" >&2
     exit 1
 }
 
@@ -50,12 +55,18 @@ if [ "$0" != "./spu" ]; then
     exit 1
 fi
 
+# Check for git
+if ! command -v git &> /dev/null; then
+    echo -e "${RED}git is not installed.${NC}"
+    exit 1
+fi
+
 # Initialize variables
 UPDATE_BASELINE=false
 OFFLINE=false
 VERIFY=false
-MANUALS_JSON="baseline/manuals.json"
-VERSIONS_JSON="baseline/versions.json"
+MANUALS_FILE="baseline/manuals.txt"
+VERSIONS_FILE="baseline/versions.txt"
 
 # Parse options
 while [[ "$1" =~ ^- && ! "$1" == "--" ]]; do case $1 in
@@ -82,8 +93,8 @@ if [[ "$1" == '--' ]]; then shift; fi
 
 # Parse manuals and versions arguments
 if [ $# -eq 2 ]; then
-    MANUALS_JSON=$1
-    VERSIONS_JSON=$2
+    MANUALS_FILE=$1
+    VERSIONS_FILE=$2
 elif [ $# -ne 0 ]; then
     usage
 fi
@@ -92,9 +103,10 @@ fi
 if [[ "$UPDATE_BASELINE" == true && "$OFFLINE" == false ]]; then
     echo "Updating baseline..."
     cd baseline
-    BASELINE_URL=$(jq ".baseline" $MANUALS_JSON | tr -d '"')
+    BASELINE_URL=$(grep "^baseline .*$" "$MANUALS_FILE" | cut -d' ' -f2)
     git checkout -f main
-    git remote set-url origin $BASELINE_URL
+    # TODO: Check to see if the URL has changed. Likely need to clone if so, or limit migration.
+    git remote set-url origin "$BASELINE_URL"
     git pull origin main
     if [ $? -ne 0 ]; then
         echo -e "${RED}Failed to update baseline. Please check your network connection and try again.${NC}"
@@ -104,37 +116,32 @@ if [[ "$UPDATE_BASELINE" == true && "$OFFLINE" == false ]]; then
     cd ..
 fi
 
-# Verify that both manuals.json and versions.json exist
-if [ ! -f $MANUALS_JSON ]; then
-    echo -e "${RED}Manuals file not found: ${MANUALS_JSON}${NC}"
+# Verify that both manuals and versions exist
+if [ ! -f "$MANUALS_FILE" ]; then
+    echo -e "${RED}Manuals file not found: ${MANUALS_FILE}${NC}"
     exit 1
 fi
-if [ ! -f $VERSIONS_JSON ]; then
-    echo -e "${RED}Versions file not found: ${VERSIONS_JSON}${NC}"
+if [ ! -f "$VERSIONS_FILE" ]; then
+    echo -e "${RED}Versions file not found: ${VERSIONS_FILE}${NC}"
     exit 1
 fi
 
-echo "Updating manuals using manuals: $MANUALS_JSON with versions: $VERSIONS_JSON"
+echo "Updating manuals using manuals: $MANUALS_FILE with versions: $VERSIONS_FILE"
 echo
 
 # Creates the pubs directory
 PUBS_DIR="pubs"
-if [ ! -d $PUBS_DIR ]; then
-    mkdir $PUBS_DIR
-fi
+mkdir -p "$PUBS_DIR"
 
 # List out all of the manuals to download
-PUBS=$(jq '. | keys | .[]' $VERSIONS_JSON)
+PUBS=$(cut -d' ' -f1 "$VERSIONS_FILE")
 
 # Update each manual
 for PUB in $PUBS; do
-    # Remove quotes from the manual name
-    PUB=$(echo $PUB | tr -d '"')
-
     # Get the desired version and URL for the manual
-    VERSION=$(jq ".[\"$PUB\"]" $VERSIONS_JSON | tr -d '"')
-    REPO_URL=$(jq ".[\"$PUB\"]" $MANUALS_JSON | tr -d '"')
-    if [ "$REPO_URL" == "null" ]; then
+    VERSION=$(grep "^$PUB .*$" "$VERSIONS_FILE" | cut -d' ' -f2)
+    REPO_URL=$(grep "^$PUB .*$" "$MANUALS_FILE" | cut -d' ' -f2)
+    if [ "$REPO_URL" == "" ]; then
         echo -e "${RED}No URL found for ${PUB}${NC}"
         echo
         continue
@@ -143,15 +150,17 @@ for PUB in $PUBS; do
     if [ "$OFFLINE" == false ]; then
         if [ -d "$PUBS_DIR/$PUB" ]; then
             # Directory exists, fetch changes and checkout the desired version
+            # TODO: Perform similar URL change/check that baseline performs?
             echo "Updating $PUBS_DIR/$PUB"
-            cd $PUBS_DIR/$PUB
+            cd "$PUBS_DIR/$PUB"
             git checkout -f main
+            git fetch -f --tags
             git pull origin main
             cd ../..
         else
             # Directory does not exist, clone the repo
             echo "Cloning $PUB"
-            git clone $REPO_URL $PUBS_DIR/$PUB
+            git clone "$REPO_URL" "$PUBS_DIR/$PUB"
         fi
     else
         echo "Skipping online update for $PUB"
@@ -164,16 +173,15 @@ for PUB in $PUBS; do
         continue
     fi
 
-    cd $PUBS_DIR/$PUB
-    if [ -z $(git tag --list $VERSION) ]; then
+    cd "$PUBS_DIR/$PUB"
+    if [ -z "$(git tag --list "$VERSION")" ]; then
         # No version specified, use the latest
-        echo -e "${RED}No version $VERSION found for ${PUB}${NC}"
-        git checkout -f $VERSION
+        echo -e "${RED}No version $VERSION found for ${PUB}, using most recent commit${NC}"
     else
         # Checkout the desired version
         echo "Using version $VERSION for $PUB"
         git config advice.detachedHead false
-        git checkout -f $VERSION
+        git checkout -f "$VERSION"
     fi
     cd ../..
     echo
@@ -182,12 +190,12 @@ done
 # Verify the versions of all downloaded manuals
 if [ "$VERIFY" == true ]; then
     echo "Verifying versions..."
-    cd $PUBS_DIR
-    for PUB in $PUBS; do
-        cd $(echo "$PUB" | tr -d '"')
-        echo ""
+    echo ""
+    cd "$PUBS_DIR"
+    for PUB in "$PUBS"; do
+        cd "$PUB"
         echo "$PUB"
-        git log --oneline --decorate HEAD
+        git log --oneline --decorate -n 1 HEAD
         cd ..
     done
     cd ..
