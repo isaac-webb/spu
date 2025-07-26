@@ -10,6 +10,7 @@ setup_file() {
     git init --bare "$TMPDIR/remote.git"
     git clone "$TMPDIR/remote.git" "$TMPDIR/remote_working"
     cd "$TMPDIR/remote_working"
+    git checkout -b main
     echo "hello" > README.md
     git add README.md
     git config user.name "testing"
@@ -23,6 +24,7 @@ setup_file() {
     git init --bare "$TMPDIR/baseline.git"
     git clone "$TMPDIR/baseline.git" "$TMPDIR/baseline_working"
     cd "$TMPDIR/baseline_working"
+    git checkout -b main
     echo "baseline $TMPDIR/baseline.git" > manuals.txt
     echo "testpub $TMPDIR/remote.git" >> manuals.txt
     echo "testpub v1" > versions.txt
