@@ -97,8 +97,8 @@ fi
 # Check for baseline update option
 if [[ "$UPDATE_BASELINE" == true && "$OFFLINE" == false ]]; then
     echo "Updating baseline..."
-    cd baseline || error_exit "Failed to enter baseline directory."
     BASELINE_URL=$(grep "^baseline .*$" "$MANUALS_FILE" | cut -d' ' -f2)
+    cd baseline || error_exit "Failed to enter baseline directory."
     git checkout -f main || error_exit "Failed to checkout main in baseline."
     # TODO: Check to see if the URL has changed. Likely need to clone if so, or limit migration.
     git remote set-url origin "$BASELINE_URL" || error_exit "Failed to set baseline remote URL."
