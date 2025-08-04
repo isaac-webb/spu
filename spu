@@ -97,7 +97,7 @@ fi
 # Check for baseline update option
 if [[ "$UPDATE_BASELINE" == true && "$OFFLINE" == false ]]; then
     echo "Updating baseline..."
-    BASELINE_URL=$(grep "^baseline .*$" "$MANUALS_FILE" | cut -d' ' -f2)
+    BASELINE_URL=$(grep "^baseline .*$" "$MANUALS_FILE" | cut -d' ' -f2) || error_exit "baseline URL not found in manuals file"
     cd baseline || error_exit "Failed to enter baseline directory."
     git checkout -f main || error_exit "Failed to checkout main in baseline."
     # TODO: Check to see if the URL has changed. Likely need to clone if so, or limit migration.
